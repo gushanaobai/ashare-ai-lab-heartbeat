@@ -1,0 +1,31 @@
+name: A-share heartbeat
+
+on:
+  schedule:
+    # 09:10 Asia/Shanghai, Monday-Friday. The runner keeps a continuous loop
+    # until 15:05 CST; this is not a periodic tick every few minutes.
+    - cron: "10 1 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ashare-ai-lab-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run continuous heartbeat
+        env:
+          SITE_URL: https://ashare-ai-lab-live-eprgkbyuuam.qoder.zone
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+          FORCE_TICK: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+        run: node runner.mjs
