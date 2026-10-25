@@ -1,0 +1,31 @@
+name: A-share AI replay drain
+
+on:
+  schedule:
+    # 10:00 and 20:00 Asia/Shanghai, every day. Advances a pending AI replay job
+    # that the trading-session heartbeat did not finish.
+    - cron: "0 2,12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ashare-ai-lab-replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Advance AI replay job
+        env:
+          SITE_URL: https://ashare-ai-lab-live-eprgkbyuuam.qoder.zone
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+          REPLAY_ONLY: "1"
+        run: node runner.mjs

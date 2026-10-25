@@ -2,6 +2,8 @@ const SITE_URL = (process.env.SITE_URL || "https://ashare-ai-lab-live-eprgkbyuua
 const ORIGIN = new URL(SITE_URL).origin;
 const TOKEN = process.env.CRON_TOKEN || "";
 const FORCE_TICK = process.env.FORCE_TICK === "1";
+const REPLAY_ONLY = process.env.REPLAY_ONLY === "1";
+const REPLAY_MS = Number(process.env.REPLAY_MS || 40 * 60 * 1000);
 const TICK_MS = 10_000;
 const START_MINUTE = 9 * 60 + 20;
 const END_MINUTE = 15 * 60 + 5;
@@ -84,11 +86,43 @@ async function waitForSession() {
   }
 }
 
+async function drainReplay(budgetMs = REPLAY_MS) {
+  const startedAt = Date.now();
+  let errors = 0;
+  while (Date.now() - startedAt < budgetMs) {
+    let result;
+    try {
+      result = await post("ai-replay-advance", {}, 150_000);
+      errors = 0;
+    } catch (error) {
+      errors += 1;
+      console.error(new Date().toISOString(), "replay error", error.message);
+      if (errors >= 5) return;
+      await sleep(20_000);
+      continue;
+    }
+    const job = result.job || {};
+    console.log(new Date().toISOString(), "replay", result.status,
+      `${job.cursor || 0}/${job.dates?.length || 0}`, job.waiting || "");
+    if (!result.active || result.status === "budget_wait") return;
+    if (result.status === "locked") await sleep(15_000);
+  }
+}
+
 async function main() {
   if (!TOKEN) return;
+  if (REPLAY_ONLY) {
+    await drainReplay();
+    return;
+  }
   if (FORCE_TICK) {
     const result = await post("tick", {}, 30_000);
     console.log("force tick", JSON.stringify(result));
+    const status = await post("ai-replay-advance", {}, 150_000).catch(() => null);
+    if (status?.active) {
+      console.log("replay active, draining");
+      await drainReplay();
+    }
     return;
   }
 
@@ -97,6 +131,19 @@ async function main() {
 
   let lastReviewDate = "";
   let decisionInFlight = false;
+  let replayInFlight = false;
+
+  const kickReplay = () => {
+    if (replayInFlight) return;
+    replayInFlight = true;
+    post("ai-replay-advance", {}, 150_000)
+      .then((result) => {
+        if (result.status === "idle") return;
+        console.log("replay", result.status, result.job?.cursor, result.job?.waiting || "");
+      })
+      .catch((error) => console.error("replay failed", error.message))
+      .finally(() => { replayInFlight = false; });
+  };
 
   while (true) {
     const now = bjt(new Date());
@@ -125,6 +172,8 @@ async function main() {
           .catch((error) => console.error("decision failed", error.message))
           .finally(() => { decisionInFlight = false; });
       }
+
+      kickReplay();
     } catch (error) {
       console.error(new Date().toISOString(), "heartbeat error", error.message);
     }
@@ -133,6 +182,7 @@ async function main() {
   }
 
   console.log("session finished");
+  await drainReplay(20 * 60 * 1000);
 }
 
 main().catch((error) => {
